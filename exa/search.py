@@ -5,8 +5,9 @@ import json
 import urllib.request
 import sys
 import argparse
+import os
 
-EXA_API_KEY = "d202aa8d-e2f4-49dd-ba04-d39357ec6611"
+EXA_API_KEY = os.environ.get("EXA_API_KEY", "")
 EXA_API_URL = "https://api.exa.ai/search"
 
 def search_exa(query, num_results=10, category=None, livecrawl=False):
@@ -21,7 +22,8 @@ def search_exa(query, num_results=10, category=None, livecrawl=False):
     """
     headers = {
         "Content-Type": "application/json",
-        "x-api-key": EXA_API_KEY
+        "Authorization": f"Bearer {EXA_API_KEY}",
+        "User-Agent": "curl/7.68.0"
     }
     
     data = {
