@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "exa": {
+      "type": "http",
+      "url": "https://mcp.exa.ai/mcp",
+      "env": {
+        "EXA_API_KEY": "d202aa8d-e2f4-49dd-ba04-d39357ec6611"
+      }
+    }
+  }
+}
