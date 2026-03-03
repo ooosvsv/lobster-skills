@@ -1,8 +1,10 @@
 import argparse
 import hashlib
+import html
 import json
 import re
 import subprocess
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 
@@ -168,8 +170,46 @@ def build_candidate_urls(url: str):
     return out
 
 
+def fetch_with_light_http(url: str):
+    """轻量直连抓取（仅做快速尝试，失败则自动回退浏览器）"""
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+            },
+        )
+        with urllib.request.urlopen(req, timeout=20) as r:
+            body = r.read().decode("utf-8", "ignore")
+
+        # 粗提取 <title>
+        m = re.search(r"<title[^>]*>(.*?)</title>", body, flags=re.I | re.S)
+        title = html.unescape(m.group(1)).strip() if m else ""
+
+        # 去标签取纯文本
+        text = re.sub(r"<script[\s\S]*?</script>", " ", body, flags=re.I)
+        text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.I)
+        text = re.sub(r"<[^>]+>", "\n", text)
+        text = html.unescape(text)
+        text = clean_text(text)
+
+        if text and len(text) >= 400 and not looks_like_login_wall(text):
+            return {
+                "url": url,
+                "title": title,
+                "text": text,
+                "links": [],
+                "mediaURLs": [],
+                "mode": "http",
+            }
+
+        return {"error": "http 抓取未得到稳定正文"}
+    except Exception as e:
+        return {"error": f"http 抓取失败：{e}"}
+
+
 def fetch_with_browser(url: str):
-    """仅使用浏览器抓取（不走任何 Twitter 第三方 API）"""
+    """浏览器抓取（agent-browser）"""
     session = f"tw-{uuid.uuid4().hex[:8]}"
 
     js = r"""
@@ -225,6 +265,7 @@ def fetch_with_browser(url: str):
 
                 data["text"] = clean_text(data.get("text", ""))
                 data["mediaURLs"] = clean_media_urls(data.get("mediaURLs", []))
+                data["mode"] = "browser"
 
                 if data.get("text") and not looks_like_login_wall(data["text"]):
                     return data
@@ -242,6 +283,18 @@ def fetch_with_browser(url: str):
             run_cmd(["agent-browser", "--session", session, "close"], timeout=20)
         except Exception:
             pass
+
+
+def fetch_auto(url: str):
+    """自动流：先轻量抓取，失败后自动启动浏览器抓全文"""
+    first = fetch_with_light_http(url)
+    if "error" not in first:
+        return first
+
+    second = fetch_with_browser(url)
+    if "error" not in second:
+        second["fallback_from"] = first.get("error")
+    return second
 
 
 def infer_author(text: str, title: str):
@@ -365,6 +418,9 @@ def format_deepreeder_md(data, original_url):
 
     summary = build_three_paragraph_summary(text)
 
+    mode = data.get("mode", "unknown")
+    fallback_from = data.get("fallback_from", "")
+
     md = f"""---
 author: "@{author_handle}"
 source: "{original_url}"
@@ -375,6 +431,7 @@ content_hash: "{content_hash}"
 ### 🐦 {author_name} (@{author_handle})
 🕒 时间: {date_str}
 📌 页面标题: {title}
+⚙️ 抓取链路: {mode}{(' (fallback: ' + fallback_from + ')') if fallback_from else ''}
 """
 
     if summary:
@@ -406,8 +463,8 @@ if __name__ == "__main__":
         print("⚠️ 未在输入中检测到有效的 Twitter/X 链接。")
         exit(1)
 
-    print("### 🔍 抓取结果（Browser-first）\n")
+    print("### 🔍 抓取结果（Auto Flow: HTTP -> Browser Fallback）\n")
     for url in urls:
-        data = fetch_with_browser(url)
+        data = fetch_auto(url)
         print(format_deepreeder_md(data, url))
         print("\n---\n")
